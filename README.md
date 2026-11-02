@@ -35,7 +35,7 @@ npm start          # stdio
 
 1. Push this repo to GitHub, then **Apps → New app** in Mas (detected as Node).
 2. Build command: `npm ci && npm run build`. Start command: `npm start`.
-3. Environment variables: `MCP_TRANSPORT=http`, `MCP_AUTH_TOKEN`, `IMAP_*`, `SMTP_*`, and `PORT` matching the port Mas assigns (the app must listen on `127.0.0.1:<port>`).
+3. Environment variables: `MCP_TRANSPORT=http`, `MCP_AUTH_TOKEN`, `IMAP_*`, `SMTP_*`. Do **not** set `PORT` or `HOST`: Mas injects them in the systemd unit, and a value in the app's variables would override Mas's port and break the health check.
 4. Set a domain so Mas provisions nginx + HTTPS. Never expose the endpoint over plain HTTP: it can read and send your mail.
 
 Then add it to Claude as a remote MCP server (`https://your-domain/mcp` with the Bearer token), or use `claude_desktop_config.example.json`.
