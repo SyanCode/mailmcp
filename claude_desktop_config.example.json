@@ -4,11 +4,11 @@
       "command": "npx",
       "args": [
         "-y", "mcp-remote",
-        "https://mailmcp.example.com/mcp",
+        "https://mmcp.sxncorp.fr/mcp",
         "--header", "Authorization:${MAILMCP_AUTH}"
       ],
       "env": {
-        "MAILMCP_AUTH": "Bearer change-me-token"
+        "MAILMCP_AUTH": "Bearer <MCP_AUTH_TOKEN>"
       }
     },
     "mailmcp-local": {

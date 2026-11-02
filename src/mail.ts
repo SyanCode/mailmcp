@@ -23,11 +23,95 @@ const EnvSchema = z.object({
 
 export type MailConfig = ReturnType<typeof loadConfig>;
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
-  const parsed = EnvSchema.safeParse(env);
+export const ACCOUNT_NAME = /^[A-Za-z0-9]+$/;
+
+/** Live set of mailbox accounts. Env accounts are read-only, admin ones can change. */
+export class Registry {
+  private readonly clients = new Map<string, MailClient>();
+  private readonly fixed = new Set<string>();
+
+  constructor(private readonly preferredDefault?: string) {}
+
+  add(name: string, client: MailClient, fromEnv = false) {
+    const key = name.toLowerCase();
+    this.clients.set(key, client);
+    if (fromEnv) this.fixed.add(key);
+  }
+
+  remove(name: string): boolean {
+    return this.clients.delete(name.toLowerCase());
+  }
+
+  has(name: string): boolean {
+    return this.clients.has(name.toLowerCase());
+  }
+
+  isFromEnv(name: string): boolean {
+    return this.fixed.has(name.toLowerCase());
+  }
+
+  names(): string[] {
+    return [...this.clients.keys()];
+  }
+
+  get defaultName(): string {
+    if (this.preferredDefault && this.clients.has(this.preferredDefault)) return this.preferredDefault;
+    return this.names()[0] ?? "";
+  }
+
+  get(name?: string): MailClient {
+    if (!this.clients.size) throw new Error("No mail account configured");
+    const key = (name ?? this.defaultName).toLowerCase();
+    const client = this.clients.get(key);
+    if (!client) throw new Error(`Unknown account "${name}". Available: ${this.names().join(", ")}`);
+    return client;
+  }
+}
+
+/**
+ * Accounts come from MAIL_ACCOUNTS=perso,pro with prefixed vars (PERSO_IMAP_HOST, ...).
+ * Without MAIL_ACCOUNTS, unprefixed IMAP_* / SMTP_* define one "default" account
+ * (only if IMAP_HOST is set, so a pure admin-UI setup can start empty).
+ */
+export function loadAccounts(env: NodeJS.ProcessEnv = process.env): Registry {
+  const names = (env.MAIL_ACCOUNTS ?? "")
+    .split(",")
+    .map((n) => n.trim())
+    .filter(Boolean);
+
+  const registry = new Registry(env.MAIL_DEFAULT_ACCOUNT?.toLowerCase());
+
+  if (!names.length) {
+    if (env.IMAP_HOST) registry.add("default", new MailClient(loadConfig(env)), true);
+    return registry;
+  }
+
+  for (const name of names) {
+    if (!ACCOUNT_NAME.test(name)) {
+      throw new Error(`Invalid account name "${name}" (letters and digits only)`);
+    }
+    if (registry.has(name)) throw new Error(`Duplicate account "${name}"`);
+    registry.add(name, new MailClient(loadConfig(env, `${name.toUpperCase()}_`, name)), true);
+  }
+
+  if (env.MAIL_DEFAULT_ACCOUNT && !registry.has(env.MAIL_DEFAULT_ACCOUNT)) {
+    throw new Error(`MAIL_DEFAULT_ACCOUNT "${env.MAIL_DEFAULT_ACCOUNT}" is not in MAIL_ACCOUNTS`);
+  }
+  return registry;
+}
+
+export function loadConfig(env: NodeJS.ProcessEnv = process.env, prefix = "", label = "default") {
+  const scoped: Record<string, string | undefined> = {};
+  for (const key of Object.keys(EnvSchema.shape)) {
+    scoped[key] = env[prefix + key];
+  }
+  // TLS strictness may be set once globally.
+  scoped.MAIL_TLS_REJECT_UNAUTHORIZED ??= env.MAIL_TLS_REJECT_UNAUTHORIZED;
+
+  const parsed = EnvSchema.safeParse(scoped);
   if (!parsed.success) {
-    const missing = parsed.error.issues.map((i) => i.path.join(".")).join(", ");
-    throw new Error(`Invalid mail configuration, check env vars: ${missing}`);
+    const missing = parsed.error.issues.map((i) => prefix + i.path.join(".")).join(", ");
+    throw new Error(`Invalid configuration for account "${label}", check env vars: ${missing}`);
   }
   const e = parsed.data;
   const rejectUnauthorized = bool(e.MAIL_TLS_REJECT_UNAUTHORIZED, true);
@@ -130,6 +214,30 @@ export class MailClient {
       return await fn(client);
     } finally {
       await client.logout().catch(() => client.close());
+    }
+  }
+
+  /** Check that IMAP login and SMTP connection both work. Throws a readable error. */
+  async verify(): Promise<void> {
+    try {
+      await this.withImap(async () => undefined);
+    } catch (e) {
+      throw new Error(`IMAP: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    const { smtp } = this.cfg;
+    const transport = nodemailer.createTransport({
+      host: smtp.host,
+      port: smtp.port,
+      secure: smtp.secure,
+      auth: { user: smtp.user, pass: smtp.pass },
+      tls: { rejectUnauthorized: smtp.rejectUnauthorized },
+    });
+    try {
+      await transport.verify();
+    } catch (e) {
+      throw new Error(`SMTP: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      transport.close();
     }
   }
 

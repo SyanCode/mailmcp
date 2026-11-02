@@ -1,32 +1,13 @@
-import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { timingSafeEqual } from "node:crypto";
+import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { readJson, safeEqual, sendJson } from "./util.js";
 
-const MAX_BODY = 1_000_000;
+type AdminHandler = (req: IncomingMessage, res: ServerResponse, path: string, isPublic: boolean) => Promise<boolean>;
 
-function tokenMatches(header: string | undefined, token: string): boolean {
+function bearerMatches(header: string | undefined, token: string): boolean {
   const m = /^Bearer (.+)$/.exec(header ?? "");
-  if (!m) return false;
-  const a = Buffer.from(m[1]);
-  const b = Buffer.from(token);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
-function send(res: ServerResponse, status: number, body: unknown) {
-  res.writeHead(status, { "Content-Type": "application/json" });
-  res.end(JSON.stringify(body));
-}
-
-async function readJson(req: IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of req) {
-    size += (chunk as Buffer).length;
-    if (size > MAX_BODY) throw new Error("Body too large");
-    chunks.push(chunk as Buffer);
-  }
-  return chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : undefined;
+  return Boolean(m) && safeEqual(m![1], token);
 }
 
 export interface HttpOptions {
@@ -35,26 +16,38 @@ export interface HttpOptions {
   authToken: string;
   /** Factory: stateless mode, one server + transport per request. */
   makeServer: () => McpServer;
+  /**
+   * Admin UI. Always served on a loopback listener; also on the main (public) listener,
+   * but the handler answers 404 there until TOTP is configured and public access enabled.
+   */
+  admin?: {
+    handler: AdminHandler;
+    localPort: number;
+  };
 }
 
-export function startHttp({ host, port, authToken, makeServer }: HttpOptions) {
-  const http = createHttpServer(async (req, res) => {
+export function startHttp({ host, port, authToken, makeServer, admin }: HttpOptions): Server[] {
+  const main = createHttpServer(async (req, res) => {
     const path = (req.url ?? "/").split("?")[0];
 
     // Unauthenticated health check for the deployer (Mas).
     if (req.method === "GET" && (path === "/" || path === "/health")) {
-      return send(res, 200, { status: "ok", name: "mailmcp" });
+      return sendJson(res, 200, { status: "ok", name: "mailmcp" });
     }
 
-    if (path !== "/mcp") return send(res, 404, { error: "Not found" });
+    if (admin && (path === "/admin" || path.startsWith("/admin/"))) {
+      await admin.handler(req, res, path, true);
+      return;
+    }
 
-    if (!tokenMatches(req.headers.authorization, authToken)) {
-      res.setHeader("WWW-Authenticate", "Bearer");
-      return send(res, 401, { error: "Unauthorized" });
+    if (path !== "/mcp") return sendJson(res, 404, { error: "Not found" });
+
+    if (!bearerMatches(req.headers.authorization, authToken)) {
+      return sendJson(res, 401, { error: "Unauthorized" }, { "WWW-Authenticate": "Bearer" });
     }
 
     if (req.method !== "POST") {
-      return send(res, 405, {
+      return sendJson(res, 405, {
         jsonrpc: "2.0",
         error: { code: -32000, message: "Method not allowed" },
         id: null,
@@ -74,7 +67,7 @@ export function startHttp({ host, port, authToken, makeServer }: HttpOptions) {
     } catch (e) {
       console.error("Request error:", e);
       if (!res.headersSent) {
-        send(res, 500, {
+        sendJson(res, 500, {
           jsonrpc: "2.0",
           error: { code: -32603, message: "Internal server error" },
           id: null,
@@ -83,8 +76,25 @@ export function startHttp({ host, port, authToken, makeServer }: HttpOptions) {
     }
   });
 
-  http.listen(port, host, () => {
+  main.listen(port, host, () => {
     console.error(`mailmcp listening on http://${host}:${port}/mcp`);
   });
-  return http;
+  const servers = [main];
+
+  if (admin) {
+    const local = createHttpServer(async (req, res) => {
+      const path = (req.url ?? "/").split("?")[0];
+      if (path === "/") {
+        res.writeHead(302, { Location: "/admin" });
+        return void res.end();
+      }
+      await admin.handler(req, res, path, false);
+    });
+    // Loopback only, never reachable from outside (use an SSH tunnel).
+    local.listen(admin.localPort, "127.0.0.1", () => {
+      console.error(`mailmcp admin on http://127.0.0.1:${admin.localPort}/admin (local only)`);
+    });
+    servers.push(local);
+  }
+  return servers;
 }

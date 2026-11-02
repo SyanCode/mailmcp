@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { MailClient } from "./mail.js";
+import type { MailClient, Registry } from "./mail.js";
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 
@@ -14,20 +14,37 @@ const fail = (e: unknown): ToolResult => ({
 });
 
 /** Build a fresh MCP server exposing the mail tools. */
-export function createServer(mail: MailClient): McpServer {
+export function createServer(registry: Registry): McpServer {
   const server = new McpServer({ name: "mailmcp", version: "0.1.0" });
+
+  const pick = (account?: string): MailClient => registry.get(account);
+  const accountField = z
+    .string()
+    .optional()
+    .describe(`Mailbox account name (default: ${registry.defaultName || "none"}). Use mail_list_accounts to list them`);
+
+  server.registerTool(
+    "mail_list_accounts",
+    {
+      title: "List mail accounts",
+      description: "List the configured mailbox accounts and which one is the default.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+    },
+    async () => ok({ default: registry.defaultName, accounts: registry.names() }),
+  );
 
   server.registerTool(
     "mail_list_folders",
     {
       title: "List mail folders",
-      description: "List all folders of the mailbox with message and unread counts.",
-      inputSchema: {},
+      description: "List all folders of a mailbox with message and unread counts.",
+      inputSchema: { account: accountField },
       annotations: { readOnlyHint: true },
     },
-    async () => {
+    async ({ account }) => {
       try {
-        return ok(await mail.listFolders());
+        return ok(await pick(account).listFolders());
       } catch (e) {
         return fail(e);
       }
@@ -41,6 +58,7 @@ export function createServer(mail: MailClient): McpServer {
       description:
         "Search emails in a folder. Returns summaries (UID, sender, subject, date, unread) newest first. Use mail_read with the UID to get the body.",
       inputSchema: {
+        account: accountField,
         folder: z.string().default("INBOX").describe("Folder path, e.g. INBOX"),
         unread: z.boolean().optional().describe("Only unread messages"),
         text: z.string().optional().describe("Full-text search in headers and body"),
@@ -51,9 +69,9 @@ export function createServer(mail: MailClient): McpServer {
       },
       annotations: { readOnlyHint: true },
     },
-    async (args) => {
+    async ({ account, ...args }) => {
       try {
-        return ok(await mail.search(args));
+        return ok(await pick(account).search(args));
       } catch (e) {
         return fail(e);
       }
@@ -66,15 +84,16 @@ export function createServer(mail: MailClient): McpServer {
       title: "Read an email",
       description: "Fetch the full content of an email by UID in a given folder.",
       inputSchema: {
+        account: accountField,
         uid: z.number().int().positive().describe("Message UID from mail_search"),
         folder: z.string().default("INBOX").describe("Folder path"),
         mark_read: z.boolean().default(false).describe("Mark the message as read"),
       },
       annotations: { readOnlyHint: false },
     },
-    async ({ uid, folder, mark_read }) => {
+    async ({ account, uid, folder, mark_read }) => {
       try {
-        return ok(await mail.read(uid, folder, mark_read));
+        return ok(await pick(account).read(uid, folder, mark_read));
       } catch (e) {
         return fail(e);
       }
@@ -87,6 +106,7 @@ export function createServer(mail: MailClient): McpServer {
       title: "Send an email",
       description: "Send an email via SMTP. This sends immediately and cannot be undone.",
       inputSchema: {
+        account: accountField.describe("Account to send from (its SMTP settings and From address)"),
         to: z.array(z.string().email()).min(1).describe("Recipients"),
         subject: z.string().min(1),
         text: z.string().describe("Plain text body"),
@@ -97,9 +117,9 @@ export function createServer(mail: MailClient): McpServer {
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     },
-    async ({ to, subject, text, cc, bcc, html, in_reply_to }) => {
+    async ({ account, to, subject, text, cc, bcc, html, in_reply_to }) => {
       try {
-        return ok(await mail.send({ to, subject, text, cc, bcc, html, inReplyTo: in_reply_to }));
+        return ok(await pick(account).send({ to, subject, text, cc, bcc, html, inReplyTo: in_reply_to }));
       } catch (e) {
         return fail(e);
       }
