@@ -1,0 +1,28 @@
+{
+  "mcpServers": {
+    "mailmcp-remote": {
+      "command": "npx",
+      "args": [
+        "-y", "mcp-remote",
+        "https://mailmcp.example.com/mcp",
+        "--header", "Authorization:${MAILMCP_AUTH}"
+      ],
+      "env": {
+        "MAILMCP_AUTH": "Bearer change-me-token"
+      }
+    },
+    "mailmcp-local": {
+      "command": "node",
+      "args": ["C:\\path\\to\\mailmcp\\dist\\index.js"],
+      "env": {
+        "MCP_TRANSPORT": "stdio",
+        "IMAP_HOST": "mail.example.com",
+        "IMAP_PORT": "993",
+        "IMAP_USER": "you@example.com",
+        "IMAP_PASS": "change-me",
+        "SMTP_HOST": "mail.example.com",
+        "SMTP_PORT": "465"
+      }
+    }
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "name": "mailmcp",
+  "version": "0.1.0",
+  "description": "MCP server connecting a self-hosted mailbox (IMAP/SMTP) to Claude",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "mailmcp": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "imapflow": "^1.0.188",
+    "mailparser": "^3.7.2",
+    "nodemailer": "^6.10.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/mailparser": "^3.4.5",
+    "@types/node": "^22.10.0",
+    "@types/nodemailer": "^6.4.17",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
