@@ -194,6 +194,16 @@ const addr = (a: unknown): string => {
 export class MailClient {
   constructor(private readonly cfg: MailConfig) {}
 
+  /** Non-secret connection details, for display in the admin. */
+  get info() {
+    return {
+      imap_host: this.cfg.imap.host,
+      imap_user: this.cfg.imap.user,
+      smtp_host: this.cfg.smtp.host,
+      from: this.cfg.smtp.from,
+    };
+  }
+
   private newImap(): ImapFlow {
     const { imap } = this.cfg;
     return new ImapFlow({

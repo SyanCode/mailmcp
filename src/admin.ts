@@ -63,13 +63,18 @@ export function createAdminHandler({ registry, store, token, envTotpSecret }: Ad
   };
 
   const listAccounts = () =>
-    registry.names().map((name) => ({
-      name,
-      source: registry.isFromEnv(name) ? "env" : "admin",
-      imap_host: store.list().find(([n]) => n.toLowerCase() === name)?.[1].IMAP_HOST ?? null,
-      imap_user: store.list().find(([n]) => n.toLowerCase() === name)?.[1].IMAP_USER ?? null,
-      default: name === registry.defaultName,
-    }));
+    registry.names().map((name) => {
+      const info = registry.get(name).info;
+      return {
+        name,
+        source: registry.isFromEnv(name) ? "env" : "admin",
+        imap_host: info.imap_host,
+        imap_user: info.imap_user,
+        smtp_host: info.smtp_host,
+        from: info.from,
+        default: name === registry.defaultName,
+      };
+    });
 
   /**
    * Returns true when the request was handled.
@@ -267,38 +272,63 @@ const ADMIN_HTML = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>mailmcp admin</title>
 <style>
-body{font:15px system-ui,sans-serif;max-width:720px;margin:2rem auto;padding:0 1rem;color:#1a1a1a}
-h1{font-size:1.4rem} input{display:block;width:100%;box-sizing:border-box;padding:.5rem;margin:.25rem 0 .75rem;border:1px solid #bbb;border-radius:4px}
-label{font-size:.85rem;color:#444} button{padding:.5rem 1rem;border:0;border-radius:4px;background:#2f5bea;color:#fff;cursor:pointer}
-button.danger{background:#c62828} button.link{background:none;color:#2f5bea;padding:0}
-table{width:100%;border-collapse:collapse;margin:1rem 0} td,th{text-align:left;padding:.4rem;border-bottom:1px solid #ddd}
-.row{display:grid;grid-template-columns:1fr 1fr;gap:0 1rem} .err{color:#c62828;min-height:1.2em} .muted{color:#777}
-fieldset{border:1px solid #ddd;border-radius:4px;margin:1rem 0;padding:.5rem 1rem} [hidden]{display:none}
+:root{--bg:#f5f6f8;--card:#fff;--fg:#17191c;--muted:#6b7280;--line:#e3e5e9;--accent:#3b5bdb;--accent-fg:#fff;--danger:#d92d20;--ok:#12805c;--ok-bg:#e3f6ee;--env-bg:#eceefe;--field:#fff}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a20;--fg:#e8eaed;--muted:#9aa1ad;--line:#272b33;--accent:#7b93ff;--accent-fg:#0f1115;--danger:#ff6b5e;--ok:#4ade9f;--ok-bg:#12332a;--env-bg:#242a48;--field:#0f1115}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:780px;margin:0 auto;padding:1.5rem 1rem 3rem}
+header{display:flex;align-items:center;justify-content:space-between;margin-bottom:1.25rem}
+h1{font-size:1.25rem;margin:0} h2{font-size:1rem;margin:0 0 .75rem}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:1.25rem;margin-bottom:1rem}
+label{display:block;font-size:.8rem;font-weight:500;color:var(--muted);margin-bottom:.75rem}
+input:not([type=checkbox]){display:block;width:100%;margin-top:.3rem;padding:.55rem .7rem;font:inherit;color:var(--fg);background:var(--field);border:1px solid var(--line);border-radius:8px}
+input:focus{outline:2px solid var(--accent);outline-offset:-1px}
+button{font:inherit;font-weight:500;padding:.5rem 1rem;border:0;border-radius:8px;background:var(--accent);color:var(--accent-fg);cursor:pointer}
+button:hover{filter:brightness(1.08)}
+button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+button.danger{background:transparent;color:var(--danger);border:1px solid var(--line);padding:.3rem .7rem;font-size:.85rem}
+.acc{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.75rem 0;border-top:1px solid var(--line)}
+.acc:first-of-type{border-top:0;padding-top:0}
+.acc b{font-weight:600} .acc small{display:block;color:var(--muted);word-break:break-all}
+.badge{display:inline-block;margin-left:.4rem;padding:.05rem .5rem;border-radius:99px;font-size:.7rem;font-weight:600;vertical-align:middle;background:var(--env-bg);color:var(--accent)}
+.badge.def{background:var(--ok-bg);color:var(--ok)}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:0 1rem}
+@media(max-width:560px){.row{grid-template-columns:1fr}}
+fieldset{border:1px solid var(--line);border-radius:8px;margin:0 0 1rem;padding:.75rem 1rem .25rem}
+legend{padding:0 .4rem;font-size:.8rem;font-weight:600}
+.check{display:flex;align-items:center;gap:.5rem;font-size:.85rem}
+.err{color:var(--danger);min-height:1.2em;margin:.5rem 0 0} .muted{color:var(--muted)}
+code{display:block;padding:.6rem .8rem;background:var(--bg);border-radius:8px;word-break:break-all;user-select:all}
+#login{max-width:380px;margin:3rem auto}
+[hidden]{display:none!important}
 </style></head><body>
-<h1>mailmcp admin</h1>
-<form id="login" hidden>
+<main>
+<header><h1>mailmcp admin</h1><button class="ghost" id="logout" hidden>Sign out</button></header>
+<form id="login" class="card" hidden>
+  <h2>Sign in</h2>
   <label>Access token<input type="password" id="token" autocomplete="current-password" required></label>
   <label id="codeWrap" hidden>Authenticator code<input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6"></label>
   <button>Sign in</button>
 </form>
 <section id="app" hidden>
-  <p><button class="link" id="logout">Sign out</button></p>
-  <h2>Accounts</h2>
-  <table><thead><tr><th>Name</th><th>Source</th><th>Login</th><th></th></tr></thead><tbody id="list"></tbody></table>
-  <h2>Security</h2>
-  <div id="security">
-    <p id="secState"></p>
+  <div class="card">
+    <h2>Accounts</h2>
+    <div id="list"></div>
+  </div>
+  <div class="card">
+    <h2>Security</h2>
+    <p id="secState" class="muted"></p>
     <div id="totpSetup" hidden>
       <p>Add this key in Google Authenticator (<em>Enter a setup key</em>, type <em>Time based</em>), then type the code it shows.</p>
-      <p><code id="totpKey"></code></p>
-      <label>Code<input id="totpCode" inputmode="numeric" maxlength="6" autocomplete="off"></label>
+      <code id="totpKey"></code>
+      <label style="margin-top:.75rem">Code<input id="totpCode" inputmode="numeric" maxlength="6" autocomplete="off"></label>
       <button id="totpConfirm" type="button">Confirm</button>
     </div>
     <button id="totpStart" type="button" hidden>Set up authenticator</button>
-    <button id="pubToggle" type="button" hidden></button>
+    <button id="pubToggle" class="ghost" type="button" hidden></button>
   </div>
-  <h2>Add an account</h2>
-  <form id="add">
+  <form id="add" class="card">
+    <h2>Add an account</h2>
     <label>Name (letters and digits)<input id="name" required pattern="[A-Za-z0-9]+"></label>
     <fieldset><legend>IMAP</legend>
       <div class="row"><label>Host<input id="imap_host" required></label><label>Port<input id="imap_port" value="993"></label></div>
@@ -309,11 +339,12 @@ fieldset{border:1px solid #ddd;border-radius:4px;margin:1rem 0;padding:.5rem 1re
       <div class="row"><label>User<input id="smtp_user"></label><label>Password<input id="smtp_pass" type="password" autocomplete="new-password"></label></div>
       <label>From address<input id="smtp_from" placeholder="You &lt;you@example.com&gt;"></label>
     </fieldset>
-    <label><input type="checkbox" id="allow_self_signed" style="display:inline;width:auto"> Accept self-signed certificate</label>
-    <p><button>Test and save</button></p>
+    <label class="check"><input type="checkbox" id="allow_self_signed"> Accept self-signed certificate</label>
+    <button>Test and save</button>
   </form>
 </section>
 <p class="err" id="err"></p>
+</main>
 <script src="/admin/app.js"></script>
 </body></html>`;
 
@@ -330,26 +361,33 @@ async function api(method, path, body) {
   if (!r.ok) throw Object.assign(new Error(data.error || 'Request failed'), { status: r.status });
   return data;
 }
+function badge(text, cls) {
+  const s = document.createElement('span'); s.className = 'badge' + (cls ? ' ' + cls : ''); s.textContent = text; return s;
+}
 function render(accounts) {
-  const tb = $('list'); tb.replaceChildren();
+  const box = $('list'); box.replaceChildren();
   if (!accounts.length) {
-    const tr = document.createElement('tr'); const td = document.createElement('td');
-    td.colSpan = 4; td.className = 'muted'; td.textContent = 'No account yet'; tr.append(td); tb.append(tr); return;
+    const p = document.createElement('p'); p.className = 'muted'; p.textContent = 'No account yet'; box.append(p); return;
   }
   for (const a of accounts) {
-    const tr = document.createElement('tr');
-    const cells = [a.name + (a.default ? ' (default)' : ''), a.source, a.imap_user || '-'];
-    for (const c of cells) { const td = document.createElement('td'); td.textContent = c; tr.append(td); }
-    const last = document.createElement('td');
+    const row = document.createElement('div'); row.className = 'acc';
+    const info = document.createElement('div');
+    const title = document.createElement('b'); title.textContent = a.name;
+    info.append(title, badge(a.source === 'env' ? 'env' : 'admin'));
+    if (a.default) info.append(badge('default', 'def'));
+    const detail = document.createElement('small');
+    detail.textContent = (a.imap_user || '-') + ' \\u00b7 IMAP ' + (a.imap_host || '-') + ' \\u00b7 SMTP ' + (a.smtp_host || '-');
+    info.append(detail);
+    row.append(info);
     if (a.source === 'admin') {
       const b = document.createElement('button'); b.className = 'danger'; b.textContent = 'Remove';
       b.onclick = async () => {
         if (!confirm('Remove account ' + a.name + '?')) return;
         try { render((await api('DELETE', 'accounts/' + encodeURIComponent(a.name))).accounts); err(); } catch (e) { err(e.message); }
       };
-      last.append(b);
+      row.append(b);
     }
-    tr.append(last); tb.append(tr);
+    box.append(row);
   }
 }
 function renderSecurity(s) {
@@ -366,7 +404,7 @@ function renderSecurity(s) {
 async function show() {
   const s = await api('GET', 'session');
   renderSecurity(s);
-  $('login').hidden = s.authenticated; $('app').hidden = !s.authenticated;
+  $('login').hidden = s.authenticated; $('app').hidden = !s.authenticated; $('logout').hidden = !s.authenticated;
   if (s.authenticated) render((await api('GET', 'accounts')).accounts);
 }
 $('totpStart').onclick = async () => {
