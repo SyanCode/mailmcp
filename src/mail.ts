@@ -19,6 +19,7 @@ const EnvSchema = z.object({
   SMTP_SECURE: z.string().optional(),
   SMTP_FROM: z.string().optional(),
   MAIL_TLS_REJECT_UNAUTHORIZED: z.string().optional(),
+  MAIL_DESCRIPTION: z.string().optional(),
 });
 
 export type MailConfig = ReturnType<typeof loadConfig>;
@@ -57,6 +58,14 @@ export class Registry {
   get defaultName(): string {
     if (this.preferredDefault && this.clients.has(this.preferredDefault)) return this.preferredDefault;
     return this.names()[0] ?? "";
+  }
+
+  /** Mailboxes with their address and description, for the model to choose from. */
+  describe() {
+    return this.names().map((name) => {
+      const { description, imap_user, from } = this.clients.get(name)!.info;
+      return { name, email: imap_user, from, description, default: name === this.defaultName };
+    });
   }
 
   get(name?: string): MailClient {
@@ -116,6 +125,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, prefix = "", la
   const e = parsed.data;
   const rejectUnauthorized = bool(e.MAIL_TLS_REJECT_UNAUTHORIZED, true);
   return {
+    description: e.MAIL_DESCRIPTION?.trim() ?? "",
     imap: {
       host: e.IMAP_HOST,
       port: e.IMAP_PORT,
@@ -194,9 +204,15 @@ const addr = (a: unknown): string => {
 export class MailClient {
   constructor(private readonly cfg: MailConfig) {}
 
-  /** Non-secret connection details, for display in the admin. */
+  /** Free-text description of the mailbox, shown to the model so it can pick the right one. */
+  setDescription(description: string) {
+    this.cfg.description = description;
+  }
+
+  /** Non-secret connection details, for display in the admin and in mail_list_accounts. */
   get info() {
     return {
+      description: this.cfg.description,
       imap_host: this.cfg.imap.host,
       imap_user: this.cfg.imap.user,
       smtp_host: this.cfg.smtp.host,

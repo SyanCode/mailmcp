@@ -6,7 +6,7 @@ MCP server connecting a self-hosted mailbox (IMAP + SMTP) to Claude. Two transpo
 
 | Tool | Description |
 |------|-------------|
-| `mail_list_accounts` | List configured mailbox accounts |
+| `mail_list_accounts` | List mailboxes with their email address and description (what each is for) |
 | `mail_list_folders` | List folders with message/unread counts |
 | `mail_search` | Search by folder, unread, text, sender, subject, date |
 | `mail_read` | Read a message by UID |
@@ -24,11 +24,13 @@ See `.env.example`. `SMTP_USER`/`SMTP_PASS` fall back to the IMAP credentials.
 
 ### Several mailboxes
 
-Set `MAIL_ACCOUNTS=perso,pro` (letters and digits only) and prefix every IMAP/SMTP variable with the upper-cased name: `PERSO_IMAP_HOST`, `PERSO_IMAP_USER`, `PERSO_IMAP_PASS`, `PERSO_SMTP_HOST`, `PRO_IMAP_HOST`, ... The first account is the default, override it with `MAIL_DEFAULT_ACCOUNT`. Every tool takes an optional `account` argument, and `mail_list_accounts` lists them. Without `MAIL_ACCOUNTS`, the unprefixed variables define a single account.
+Set `MAIL_ACCOUNTS=perso,pro` (letters and digits only) and prefix every IMAP/SMTP variable with the upper-cased name: `PERSO_IMAP_HOST`, `PERSO_IMAP_USER`, `PERSO_IMAP_PASS`, `PERSO_SMTP_HOST`, `PRO_IMAP_HOST`, ... The first account is the default, override it with `MAIL_DEFAULT_ACCOUNT`. Add `<NAME>_MAIL_DESCRIPTION` (e.g. `PRO_MAIL_DESCRIPTION="Work mailbox: clients and invoices"`) so Claude knows what each mailbox is for. Every tool takes an optional `account` argument, and `mail_list_accounts` returns each mailbox's address and description. Without `MAIL_ACCOUNTS`, the unprefixed variables define a single account.
 
 ### Admin UI
 
 Add and remove mailboxes from a browser instead of editing env vars. Each new account is tested (IMAP login + SMTP) before it is saved, and takes effect immediately, without restart. Accounts defined by env vars are listed but read-only.
+
+Adding a mailbox only needs the **email address**, the **password** and a **description**: the name is derived from the address and the IMAP/SMTP host defaults to `mail.<domain>` (override under *Advanced settings*). The description can be edited later from the account list and is what `mail_list_accounts` shows to Claude.
 
 | Variable | Notes |
 |----------|-------|

@@ -67,6 +67,7 @@ export function createAdminHandler({ registry, store, token, envTotpSecret }: Ad
       const info = registry.get(name).info;
       return {
         name,
+        description: info.description,
         source: registry.isFromEnv(name) ? "env" : "admin",
         imap_host: info.imap_host,
         imap_user: info.imap_user,
@@ -199,7 +200,16 @@ export function createAdminHandler({ registry, store, token, envTotpSecret }: Ad
 
       if (path === "/admin/api/accounts" && req.method === "POST") {
         const b = (await readJson(req)) as Record<string, unknown> | undefined;
-        const name = str(b?.name);
+        const imapUser = str(b?.imap_user);
+        const domain = imapUser.split("@")[1] ?? "";
+        // Simple form: only the address and password are needed, the rest is derived.
+        let name = str(b?.name);
+        if (!name) {
+          const local = imapUser.split("@")[0].replace(/[^A-Za-z0-9]/g, "");
+          name = local || "mailbox";
+          if (registry.has(name)) name += domain.replace(/[^A-Za-z0-9]/g, "");
+          for (let i = 2; registry.has(name); i++) name = `${local || "mailbox"}${i}`;
+        }
         if (!ACCOUNT_NAME.test(name)) {
           sendJson(res, 400, { error: "Name: letters and digits only" });
           return true;
@@ -209,17 +219,18 @@ export function createAdminHandler({ registry, store, token, envTotpSecret }: Ad
           return true;
         }
         const acc: StoredAccount = {
-          IMAP_HOST: str(b?.imap_host),
+          IMAP_HOST: str(b?.imap_host) || (domain ? `mail.${domain}` : ""),
           IMAP_PORT: str(b?.imap_port) || "993",
-          IMAP_USER: str(b?.imap_user),
+          IMAP_USER: imapUser,
           IMAP_PASS: typeof b?.imap_pass === "string" ? b.imap_pass : "",
-          SMTP_HOST: str(b?.smtp_host) || str(b?.imap_host),
+          SMTP_HOST: str(b?.smtp_host) || str(b?.imap_host) || (domain ? `mail.${domain}` : ""),
           SMTP_PORT: str(b?.smtp_port) || "465",
         };
         for (const [k, v] of [
           ["SMTP_USER", str(b?.smtp_user)],
           ["SMTP_PASS", typeof b?.smtp_pass === "string" ? b.smtp_pass : ""],
           ["SMTP_FROM", str(b?.smtp_from)],
+          ["MAIL_DESCRIPTION", str(b?.description)],
         ] as const) {
           if (v) acc[k] = v;
         }
@@ -245,6 +256,27 @@ export function createAdminHandler({ registry, store, token, envTotpSecret }: Ad
       }
 
       const m = /^\/admin\/api\/accounts\/([A-Za-z0-9]+)$/.exec(path);
+      if (m && req.method === "PATCH") {
+        const name = m[1].toLowerCase();
+        if (registry.isFromEnv(name) || !registry.has(name)) {
+          sendJson(res, 400, { error: "Unknown account, or defined by environment variables (use <NAME>_MAIL_DESCRIPTION)" });
+          return true;
+        }
+        const b = (await readJson(req)) as Record<string, unknown> | undefined;
+        const description = str(b?.description);
+        const acc = store.list().find(([n]) => n === name)?.[1];
+        if (!acc) {
+          sendJson(res, 404, { error: "Unknown account" });
+          return true;
+        }
+        const next = { ...acc };
+        if (description) next.MAIL_DESCRIPTION = description;
+        else delete next.MAIL_DESCRIPTION;
+        store.set(name, next);
+        registry.get(name).setDescription(description);
+        sendJson(res, 200, { ok: true, accounts: listAccounts() });
+        return true;
+      }
       if (m && req.method === "DELETE") {
         const name = m[1].toLowerCase();
         if (registry.isFromEnv(name)) {
@@ -300,6 +332,9 @@ legend{padding:0 .4rem;font-size:.8rem;font-weight:600}
 .err{color:var(--danger);min-height:1.2em;margin:.5rem 0 0} .muted{color:var(--muted)}
 code{display:block;padding:.6rem .8rem;background:var(--bg);border-radius:8px;word-break:break-all;user-select:all}
 #login{max-width:380px;margin:3rem auto}
+summary{cursor:pointer;margin:.25rem 0 1rem}
+.desc{display:block;color:var(--fg);margin:.15rem 0}
+.link{background:none;border:0;padding:0;color:var(--accent);font-size:.8rem;cursor:pointer}
 [hidden]{display:none!important}
 </style></head><body>
 <main>
@@ -329,10 +364,12 @@ code{display:block;padding:.6rem .8rem;background:var(--bg);border-radius:8px;wo
   </div>
   <form id="add" class="card">
     <h2>Add an account</h2>
-    <label>Name (letters and digits)<input id="name" required pattern="[A-Za-z0-9]+"></label>
-    <fieldset><legend>IMAP</legend>
-      <div class="row"><label>Host<input id="imap_host" required></label><label>Port<input id="imap_port" value="993"></label></div>
-      <div class="row"><label>User<input id="imap_user" required></label><label>Password<input id="imap_pass" type="password" required autocomplete="new-password"></label></div>
+    <div class="row"><label>Email address<input id="imap_user" type="email" required placeholder="you@example.com"></label><label>Password<input id="imap_pass" type="password" required autocomplete="new-password"></label></div>
+    <label>Description (what this mailbox is for, shown to Claude)<input id="description" placeholder="Work mailbox: clients and invoices"></label>
+    <details><summary class="muted">Advanced settings (servers, ports, name)</summary>
+    <label>Name (letters and digits, derived from the address if empty)<input id="name" pattern="[A-Za-z0-9]*"></label>
+    <fieldset><legend>IMAP (host defaults to mail.&lt;domain&gt;)</legend>
+      <div class="row"><label>Host<input id="imap_host"></label><label>Port<input id="imap_port" value="993"></label></div>
     </fieldset>
     <fieldset><legend>SMTP (defaults to IMAP host and credentials)</legend>
       <div class="row"><label>Host<input id="smtp_host"></label><label>Port<input id="smtp_port" value="465"></label></div>
@@ -340,7 +377,8 @@ code{display:block;padding:.6rem .8rem;background:var(--bg);border-radius:8px;wo
       <label>From address<input id="smtp_from" placeholder="You &lt;you@example.com&gt;"></label>
     </fieldset>
     <label class="check"><input type="checkbox" id="allow_self_signed"> Accept self-signed certificate</label>
-    <button>Test and save</button>
+    </details>
+    <button style="margin-top:1rem">Test and save</button>
   </form>
 </section>
 <p class="err" id="err"></p>
@@ -377,9 +415,18 @@ function render(accounts) {
     if (a.default) info.append(badge('default', 'def'));
     const detail = document.createElement('small');
     detail.textContent = (a.imap_user || '-') + ' \\u00b7 IMAP ' + (a.imap_host || '-') + ' \\u00b7 SMTP ' + (a.smtp_host || '-');
-    info.append(detail);
+    const desc = document.createElement('span'); desc.className = 'desc'; desc.textContent = a.description || 'No description';
+    if (!a.description) desc.classList.add('muted');
+    info.append(desc, detail);
     row.append(info);
     if (a.source === 'admin') {
+      const ed = document.createElement('button'); ed.className = 'link'; ed.textContent = 'Edit description';
+      ed.onclick = async () => {
+        const v = prompt('Description of ' + a.name, a.description || '');
+        if (v === null) return;
+        try { render((await api('PATCH', 'accounts/' + encodeURIComponent(a.name), { description: v })).accounts); err(); } catch (e) { err(e.message); }
+      };
+      info.append(ed);
       const b = document.createElement('button'); b.className = 'danger'; b.textContent = 'Remove';
       b.onclick = async () => {
         if (!confirm('Remove account ' + a.name + '?')) return;
@@ -429,7 +476,7 @@ $('login').onsubmit = async (e) => {
 $('logout').onclick = async () => { await api('POST', 'logout').catch(() => {}); await show(); };
 $('add').onsubmit = async (e) => {
   e.preventDefault();
-  const ids = ['name','imap_host','imap_port','imap_user','imap_pass','smtp_host','smtp_port','smtp_user','smtp_pass','smtp_from'];
+  const ids = ['name','description','imap_host','imap_port','imap_user','imap_pass','smtp_host','smtp_port','smtp_user','smtp_pass','smtp_from'];
   const body = Object.fromEntries(ids.map((i) => [i, $(i).value]));
   body.allow_self_signed = $('allow_self_signed').checked;
   err('Testing connection...');

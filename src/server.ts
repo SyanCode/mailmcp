@@ -21,17 +21,18 @@ export function createServer(registry: Registry): McpServer {
   const accountField = z
     .string()
     .optional()
-    .describe(`Mailbox account name (default: ${registry.defaultName || "none"}). Use mail_list_accounts to list them`);
+    .describe(`Mailbox account name (default: ${registry.defaultName || "none"}). Use mail_list_accounts to see each mailbox's address and description`);
 
   server.registerTool(
     "mail_list_accounts",
     {
       title: "List mail accounts",
-      description: "List the configured mailbox accounts and which one is the default.",
+      description:
+        "List the configured mailboxes with their email address and description (what each one is for), and which is the default. Call this first to choose the right `account` for the other tools.",
       inputSchema: {},
       annotations: { readOnlyHint: true },
     },
-    async () => ok({ default: registry.defaultName, accounts: registry.names() }),
+    async () => ok({ default: registry.defaultName, accounts: registry.describe() }),
   );
 
   server.registerTool(
