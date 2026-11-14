@@ -58,7 +58,8 @@ function legalNotice(env: NodeJS.ProcessEnv): string {
 Éditeur : ${fact(env, "LEGAL_PUBLISHER_NAME", "nom ou raison sociale de l'éditeur")}<br>
 Adresse : ${fact(env, "LEGAL_PUBLISHER_ADDRESS", "adresse postale de l'éditeur")}<br>
 Contact : ${fact(env, "LEGAL_CONTACT_EMAIL", "adresse e-mail de contact")}<br>
-Directeur de la publication : ${fact(env, "LEGAL_PUBLICATION_DIRECTOR", "nom du directeur de la publication")}</p>
+Directeur de la publication : ${fact(env, "LEGAL_PUBLICATION_DIRECTOR", "nom du directeur de la publication")}<br>
+Immatriculation (SIRET / RCS / n° de TVA) : ${fact(env, "LEGAL_REGISTRATION", "numéro SIRET, RCS ou TVA de l'éditeur")}</p>
 <h2>Hébergeur</h2>
 <p>${fact(env, "LEGAL_HOST", "nom, adresse et contact de l'hébergeur")}</p>
 <h2>Propriété intellectuelle</h2>
