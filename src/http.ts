@@ -2,6 +2,7 @@ import { createServer as createHttpServer, type IncomingMessage, type Server, ty
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { readJson, safeEqual, sendJson } from "./util.js";
+import { handlePublicPage } from "./legal.js";
 
 type AdminHandler = (req: IncomingMessage, res: ServerResponse, path: string, isPublic: boolean) => Promise<boolean>;
 
@@ -29,6 +30,9 @@ export interface HttpOptions {
 export function startHttp({ host, port, authToken, makeServer, admin }: HttpOptions): Server[] {
   const main = createHttpServer(async (req, res) => {
     const path = (req.url ?? "/").split("?")[0];
+
+    // Public pages: legal notice, privacy policy, and an HTML landing page for browsers.
+    if (handlePublicPage(req, res, path)) return;
 
     // Unauthenticated health check for the deployer (Mas).
     if (req.method === "GET" && (path === "/" || path === "/health")) {
